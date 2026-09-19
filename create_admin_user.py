@@ -25,7 +25,21 @@ async def create_user(connection, email, username, password, role):
         email,
     )
     if existing:
-        print(f"Already exists: {email}")
+        document = json.loads(existing) if isinstance(existing, str) else existing
+        document["username"] = username
+        document["password_hash"] = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        document["role"] = role
+        document["is_active"] = True
+        document["updated_at"] = datetime.utcnow().isoformat()
+        await connection.execute(
+            """
+            UPDATE app_documents SET document = $1::jsonb
+            WHERE collection = 'users' AND id = $2
+            """,
+            json.dumps(document),
+            document["_id"],
+        )
+        print(f"Updated {role}: {email} / {password}")
         return
 
     now = datetime.utcnow().isoformat()
@@ -64,8 +78,8 @@ async def main():
                 )
                 """
             )
-            await create_user(connection, "admin@example.com", "admin", "admin123", "admin")
-            await create_user(connection, "provider@ecommerce.local", "provider", "Provider@123456", "provider")
+            await create_user(connection, "admin@ecommerce.local", "admin", "admin123", "admin")
+            await create_user(connection, "provider@ecommerce.local", "provider", "Provider123", "provider")
             await create_user(connection, "user@ecommerce.local", "user", "User@123456", "user")
     finally:
         await pool.close()
