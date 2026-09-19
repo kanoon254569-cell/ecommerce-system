@@ -1,43 +1,233 @@
-"""Database Connection and Operations"""
-from motor.motor_asyncio import AsyncIOMotorClient
-from .config import settings
-from typing import List, Optional, Dict, Any
+"""PostgreSQL-backed document storage and database operations."""
 from datetime import datetime, timedelta
-from bson import ObjectId
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
+import json
+import re
 import uuid
-import os
+
+import asyncpg
+
+from .config import settings
+
+
+class ObjectId(str):
+    """Small compatibility type for the API's existing string ID contract."""
+
+    def __new__(cls, value: str):
+        normalized = str(value)
+        if not re.fullmatch(r"[0-9a-fA-F]{24}", normalized):
+            raise ValueError(f"Invalid object id: {value}")
+        return str.__new__(cls, normalized)
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex[:24]
+
+
+def _json_default(value: Any):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, ObjectId):
+        return str(value)
+    raise TypeError(f"Unsupported JSON value: {type(value)!r}")
+
+
+def _restore_types(value: Any, key: str = ""):
+    if isinstance(value, dict):
+        return {item_key: _restore_types(item, item_key) for item_key, item in value.items()}
+    if isinstance(value, list):
+        return [_restore_types(item, key) for item in value]
+    if isinstance(value, str) and (key.endswith("_at") or key in {"timestamp", "payment_date"}):
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            pass
+    return value
+
+
+def _same(left: Any, right: Any) -> bool:
+    return str(left) == str(right) if isinstance(left, (ObjectId, str)) or isinstance(right, (ObjectId, str)) else left == right
+
+
+def _matches(document: dict, query: dict) -> bool:
+    for field, expected in query.items():
+        if field == "$or":
+            if not any(_matches(document, option) for option in expected):
+                return False
+            continue
+
+        actual = document.get(field)
+        if isinstance(expected, dict):
+            for operator, operand in expected.items():
+                if operator == "$in" and not any(_same(actual, item) for item in operand):
+                    return False
+                if operator == "$ne" and _same(actual, operand):
+                    return False
+                if operator == "$gte" and (actual is None or actual < operand):
+                    return False
+                if operator == "$regex":
+                    flags = re.IGNORECASE if expected.get("$options") == "i" else 0
+                    if not re.search(str(operand), str(actual or ""), flags):
+                        return False
+                if operator == "$options":
+                    continue
+        elif not _same(actual, expected):
+            return False
+    return True
+
+
+class PostgreSQLCursor:
+    def __init__(self, collection, query: dict):
+        self.collection = collection
+        self.query = query
+        self.sort_field = None
+        self.sort_direction = 1
+
+    def sort(self, field: str, direction: int = 1):
+        self.sort_field = field
+        self.sort_direction = direction
+        return self
+
+    async def to_list(self, length=None):
+        documents = await self.collection._all()
+        documents = [item for item in documents if _matches(item, self.query)]
+        if self.sort_field:
+            documents.sort(
+                key=lambda item: item.get(self.sort_field),
+                reverse=self.sort_direction < 0,
+            )
+        return documents if length is None else documents[:length]
+
+
+class PostgreSQLCollection:
+    def __init__(self, database, name: str):
+        self.database = database
+        self.name = name
+
+    async def _all(self):
+        rows = await self.database.pool.fetch(
+            "SELECT document FROM app_documents WHERE collection = $1",
+            self.name,
+        )
+        documents = []
+        for row in rows:
+            document = row["document"]
+            if isinstance(document, str):
+                document = json.loads(document)
+            documents.append(_restore_types(document))
+        return documents
+
+    def find(self, query: Optional[dict] = None):
+        return PostgreSQLCursor(self, query or {})
+
+    async def find_one(self, query: Optional[dict] = None):
+        for document in await self._all():
+            if _matches(document, query or {}):
+                return document
+        return None
+
+    async def count_documents(self, query: Optional[dict] = None):
+        if not query:
+            row = await self.database.pool.fetchrow(
+                "SELECT COUNT(*) AS count FROM app_documents WHERE collection = $1",
+                self.name,
+            )
+            return row["count"]
+        return len([item for item in await self._all() if _matches(item, query)])
+
+    async def insert_one(self, document: dict):
+        document = dict(document)
+        document.setdefault("_id", _new_id())
+        await self.database.pool.execute(
+            "INSERT INTO app_documents(collection, document) VALUES ($1, $2::jsonb)",
+            self.name,
+            json.dumps(document, default=_json_default),
+        )
+        return SimpleNamespace(inserted_id=document["_id"])
+
+    async def insert_many(self, documents: List[dict]):
+        inserted_ids = []
+        async with self.database.pool.acquire() as connection:
+            async with connection.transaction():
+                for item in documents:
+                    document = dict(item)
+                    document.setdefault("_id", _new_id())
+                    await connection.execute(
+                        "INSERT INTO app_documents(collection, document) VALUES ($1, $2::jsonb)",
+                        self.name,
+                        json.dumps(document, default=_json_default),
+                    )
+                    inserted_ids.append(document["_id"])
+        return SimpleNamespace(inserted_ids=inserted_ids)
+
+    async def update_one(self, query: dict, changes: dict):
+        document = await self.find_one(query)
+        if not document:
+            return SimpleNamespace(matched_count=0, modified_count=0)
+        for field, value in changes.get("$set", {}).items():
+            document[field] = value
+        await self.database.pool.execute(
+            "UPDATE app_documents SET document = $1::jsonb WHERE collection = $2 AND id = $3",
+            json.dumps(document, default=_json_default),
+            self.name,
+            str(document["_id"]),
+        )
+        return SimpleNamespace(matched_count=1, modified_count=1)
+
+    async def delete_one(self, query: dict):
+        document = await self.find_one(query)
+        if not document:
+            return SimpleNamespace(deleted_count=0)
+        result = await self.database.pool.execute(
+            "DELETE FROM app_documents WHERE collection = $1 AND id = $2",
+            self.name,
+            str(document["_id"]),
+        )
+        return SimpleNamespace(deleted_count=int(result.split()[-1]))
+
+
+class PostgreSQLDatabase:
+    def __init__(self, pool):
+        self.pool = pool
+
+    def __getitem__(self, collection: str):
+        return PostgreSQLCollection(self, collection)
+
 
 class Database:
-    client = None
+    pool = None
     db = None
+
 
 db = Database()
 
-async def connect_to_mongo():
-    """Connect to MongoDB"""
-    db.client = AsyncIOMotorClient(
-        settings.MONGODB_URL,
-        serverSelectionTimeoutMS=5000
-    )
-    db.db = db.client[settings.DATABASE_NAME]
-    try:
-        await db.client.admin.command("ping")
-        print(f"✅ Connected to MongoDB: {settings.DATABASE_NAME}")
-    except Exception as exc:
-        using_local_default = (
-            settings.MONGODB_URL == "mongodb://localhost:27017"
-            and not any(os.getenv(name) for name in ("MONGODB_URL", "MONGODB_URI", "MONGO_URL", "MONGO_URI"))
-        )
-        if using_local_default:
-            print("⚠️ MongoDB env is not set. Render cannot use localhost:27017.")
-        print(f"❌ MongoDB connection failed: {exc}")
-        raise
 
-async def close_mongo_connection():
-    """Close MongoDB connection"""
-    if db.client:
-        db.client.close()
-        print("❌ Disconnected from MongoDB")
+async def connect_to_postgres():
+    """Connect to PostgreSQL and create the document storage table."""
+    db.pool = await asyncpg.create_pool(settings.DATABASE_URL, min_size=1, max_size=5)
+    await db.pool.execute(
+        """
+        CREATE TABLE IF NOT EXISTS app_documents (
+            collection TEXT NOT NULL,
+            id TEXT GENERATED ALWAYS AS ((document->>'_id')) STORED,
+            document JSONB NOT NULL,
+            PRIMARY KEY (collection, id)
+        )
+        """
+    )
+    db.db = PostgreSQLDatabase(db.pool)
+    print(f"✅ Connected to PostgreSQL: {settings.DATABASE_NAME}")
+
+
+async def close_postgres_connection():
+    if db.pool:
+        await db.pool.close()
+        print("❌ Disconnected from PostgreSQL")
+
+
+connect_to_mongo = connect_to_postgres
+close_mongo_connection = close_postgres_connection
 
 # ===================== DATABASE OPERATIONS =====================
 

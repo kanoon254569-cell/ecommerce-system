@@ -13,5 +13,5 @@ services:
         value: ecommerce_db
       - key: SECRET_KEY
         generateValue: true
-      - key: MONGODB_URL
+      - key: DATABASE_URL
         sync: false

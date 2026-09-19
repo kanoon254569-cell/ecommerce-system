@@ -24,15 +24,12 @@ def _coerce_debug(value) -> bool:
     return True
 
 class Settings(BaseSettings):
-    # MongoDB
-    MONGODB_URL: str = _resolve_env(
-        "MONGODB_URL",
-        "MONGODB_URI",
-        "MONGO_URL",
-        "MONGO_URI",
-        default="mongodb://localhost:27017"
+    # PostgreSQL
+    DATABASE_URL: str = _resolve_env(
+        "DATABASE_URL",
+        default="postgresql://ecommerce:ecommerce@localhost:5432/ecommerce_db"
     )
-    DATABASE_NAME: str = _resolve_env("DATABASE_NAME", "MONGODB_DB", default="ecommerce_db")
+    DATABASE_NAME: str = _resolve_env("DATABASE_NAME", default="ecommerce_db")
     
     # JWT
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")

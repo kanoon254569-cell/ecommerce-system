@@ -1,20 +1,20 @@
 version: '3.8'
 
 services:
-  # MongoDB Database
-  mongodb:
-    image: mongo:7.0
-    container_name: ecommerce_mongodb
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16
+    container_name: ecommerce_postgres
     ports:
-      - "27017:27017"
+      - "5432:5432"
     volumes:
-      - mongodb_data:/data/db
+      - postgres_data:/var/lib/postgresql/data
     environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: admin123
-      MONGO_INITDB_DATABASE: ecommerce_db
+      POSTGRES_USER: ecommerce
+      POSTGRES_PASSWORD: ecommerce
+      POSTGRES_DB: ecommerce_db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      test: ["CMD-SHELL", "pg_isready -U ecommerce -d ecommerce_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,10 +28,11 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      mongodb:
+      postgres:
         condition: service_healthy
     environment:
-      MONGODB_URL: mongodb://admin:admin123@mongodb:27017/ecommerce_db?authSource=admin
+      DATABASE_URL: postgresql://ecommerce:ecommerce@postgres:5432/ecommerce_db
+      DATABASE_NAME: ecommerce_db
       SECRET_KEY: your-secret-key-change-in-production
       DEBUG: "True"
     volumes:
@@ -42,7 +43,7 @@ services:
     command: python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 
 volumes:
-  mongodb_data:
+  postgres_data:
 
 networks:
   ecommerce-network:

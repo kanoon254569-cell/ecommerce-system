@@ -11,7 +11,7 @@ import os
 
 from .config import settings
 from .database import (
-    connect_to_mongo, close_mongo_connection, db,
+    connect_to_postgres, close_postgres_connection, db, ObjectId,
     UserDB, ProductDB, OrderDB, TransactionLogDB, InventoryDB, DashboardDB,
     get_provider_scopes
 )
@@ -25,7 +25,6 @@ from .models import (
 )
 from .data_loader import load_excel_data, seed_database
 from typing import Optional, List
-from bson import ObjectId
 import uuid
 import bcrypt
 
@@ -224,7 +223,7 @@ async def build_admin_studio_snapshot() -> dict:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    await connect_to_mongo()
+    await connect_to_postgres()
     print("🚀 FastAPI Server Started")
     
     # Auto-load Excel data on startup
@@ -270,7 +269,7 @@ async def lifespan(app: FastAPI):
     
     yield
     # Shutdown
-    await close_mongo_connection()
+    await close_postgres_connection()
     print("🛑 FastAPI Server Stopped")
 
 # ===================== CREATE APP =====================
@@ -1251,8 +1250,6 @@ async def process_payment(
     3. Process payment (mock implementation)
     4. Update order status
     """
-    from bson import ObjectId
-    
     try:
         # === Step 1: Get order ===
         order = await OrderDB.get_order_by_id(order_id)
