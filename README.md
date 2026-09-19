@@ -61,7 +61,7 @@ Strategies:
 
 ### Prerequisites
 - Python 3.8+
-- MongoDB 4.0+
+- PostgreSQL 14+
 - pip
 
 ### Installation
@@ -77,8 +77,8 @@ chmod +x setup.sh
 # 3. Create .env file
 cp .env.example .env
 
-# 4. Start MongoDB (in another terminal)
-mongod --dbpath /path/to/mongodb/data
+# 4. Start PostgreSQL with Docker Compose
+docker compose up -d postgres
 
 # 5. Start FastAPI Server
 cd backend
@@ -88,8 +88,40 @@ python -m uvicorn main:app --reload --port 8000
 ### Load Excel Data
 
 ```bash
-# After starting MongoDB and server
+# After starting PostgreSQL and server
 python backend/data_loader.py '../Adidas US Sales Datasets.xlsx'
+
+### Database Configuration
+
+The application uses PostgreSQL. Set `DATABASE_URL` in `.env` or in your
+deployment provider:
+
+```ini
+DATABASE_URL=postgresql://ecommerce:ecommerce@localhost:5432/ecommerce_db
+DATABASE_NAME=ecommerce_db
+SECRET_KEY=change-this-in-production
+DEBUG=false
+```
+
+For Render, use the PostgreSQL **External Database URL** when connecting from
+your local machine, or the **Internal Database URL** when the database and web
+service are in the same Render workspace.
+
+### Default Accounts
+
+Run this after PostgreSQL is available to create or update the demo accounts:
+
+```bash
+python3 create_admin_user.py
+```
+
+```text
+Admin:    admin@ecommerce.local / admin123
+Provider: provider@ecommerce.local / Provider123
+```
+
+The script reads `DATABASE_URL` from the environment and updates existing
+accounts safely.
 ```
 
 ## 📚 API Endpoints
@@ -155,7 +187,7 @@ GET    /health                     # Server status
 #### Products
 ```json
 {
-  "_id": ObjectId,
+  "_id": "product_123",
   "sku": "SKU-PRODUCT-NAME-001",
   "name": "Product Name",
   "price": 99.99,
@@ -168,7 +200,7 @@ GET    /health                     # Server status
 #### Orders
 ```json
 {
-  "_id": ObjectId,
+  "_id": "order_123",
   "user_id": "user_123",
   "provider_id": "provider_001",
   "items": [
@@ -183,7 +215,7 @@ GET    /health                     # Server status
 #### Transaction Logs
 ```json
 {
-  "_id": ObjectId,
+  "_id": "transaction_123",
   "user_id": "user_123",
   "product_id": "product_123",
   "idempotency_key": "uuid-123",
@@ -269,7 +301,8 @@ SECRET_KEY=change-this!             # JWT secret
 ALGORITHM=HS256
 
 # Database
-MONGODB_URL=mongodb://localhost:27017
+DATABASE_URL=postgresql://ecommerce:ecommerce@localhost:5432/ecommerce_db
+DATABASE_NAME=ecommerce_db
 ```
 
 ## 🧪 Testing
@@ -285,13 +318,13 @@ python test_duplicate_prevention.py
 
 ## 🐛 Troubleshooting
 
-### MongoDB Connection Error
+### PostgreSQL Connection Error
 ```
-Error: Failed to connect to MongoDB
+Error: Failed to connect to PostgreSQL
 Solution:
-  1. Ensure mongod is running: mongod --dbpath /path/to/data
-  2. Check MONGODB_URL in .env
-  3. Verify MongoDB port (default: 27017)
+  1. Start PostgreSQL: docker compose up -d postgres
+  2. Check DATABASE_URL in .env
+  3. Verify PostgreSQL port (default: 5432)
 ```
 
 ### Rate Limit Too Strict
@@ -315,7 +348,7 @@ This shouldn't happen due to validation, but if it does:
 3. Implement email notifications
 4. Create React/Vue frontends for all panels
 5. Add comprehensive logging and monitoring
-6. Setup backup strategy for MongoDB
+6. Setup backup strategy for PostgreSQL
 
 ## 📞 Support
 
