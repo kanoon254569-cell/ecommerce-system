@@ -14,4 +14,12 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: ecommerce-db
+          property: connectionString
+
+databases:
+  - name: ecommerce-db
+    databaseName: ecommerce_db
+    user: ecommerce
+    plan: free
