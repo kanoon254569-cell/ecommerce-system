@@ -216,6 +216,7 @@
                         <option value="th">ไทย</option>
                     </select>
                 </div>
+                <button onclick="downloadExcelExport()" id="exportButton" style="background: #27ae60; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: 600;">📥 Export Excel</button>
                 <button onclick="handleLogout()" id="logoutButton" style="background: #e74c3c; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: 600;">🚪 Logout</button>
             </div>
         </header>
@@ -267,6 +268,7 @@
                 pageTitle: "📊 Admin Dashboard",
                 pageSubtitle: "Welcome to the management dashboard",
                 logoutButton: "🚪 Logout",
+                exportButton: "📥 Export Excel",
                 totalProductsLabel: "📦 Total Products",
                 totalStockLabel: "📊 Total Stock",
                 revenueLabel: "💰 Revenue",
@@ -292,6 +294,7 @@
                 pageTitle: "📊 แดชบอร์ดผู้ดูแล",
                 pageSubtitle: "ยินดีต้อนรับเข้าสู่ระบบบริหารจัดการ",
                 logoutButton: "🚪 ออกจากระบบ",
+                exportButton: "📥 Export Excel",
                 totalProductsLabel: "📦 จำนวนสินค้าทั้งหมด",
                 totalStockLabel: "📊 สต็อกรวม",
                 revenueLabel: "💰 รายได้",
@@ -329,7 +332,7 @@
         
         function applyTranslations() {
             document.title = t("title");
-            ["pageTitle","pageSubtitle","logoutButton","totalProductsLabel","totalStockLabel","revenueLabel","ordersLabel","inventoryAlertsTitle","skuSummaryTitle"].forEach((id) => {
+            ["pageTitle","pageSubtitle","logoutButton","exportButton","totalProductsLabel","totalStockLabel","revenueLabel","ordersLabel","inventoryAlertsTitle","skuSummaryTitle"].forEach((id) => {
                 const element = document.getElementById(id);
                 if (element) {
                     element.textContent = t(id);
@@ -447,6 +450,40 @@
         function showMessage(msg, type) {
             const msgDiv = document.getElementById("message");
             msgDiv.innerHTML = `<div class="${type}">${msg}</div>`;
+        }
+
+        async function downloadExcelExport() {
+            if (!token) {
+                showMessage(t("unauthorized"), "error");
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/admin/export-excel`, {
+                    headers: {
+                        "Authorization": `Bearer ${token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || "Export failed");
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                const disposition = response.headers.get("Content-Disposition") || "";
+                const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+                link.href = url;
+                link.download = filenameMatch ? filenameMatch[1] : "export_all_data.xlsx";
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                showMessage(`${t("errorPrefix")} ${error.message}`, "error");
+            }
         }
         
         function handleLogout() {

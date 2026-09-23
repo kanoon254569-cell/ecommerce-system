@@ -170,6 +170,7 @@
                             <option value="th" class="text-black">ไทย</option>
                         </select>
                     </div>
+                    <button onclick="downloadExcelExport()" id="exportButton" class="rounded-full border border-white/15 bg-emerald-400 px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-emerald-300">📥 Export Excel</button>
                     <button onclick="handleLogout()" id="logoutButton" class="rounded-full border border-white/15 bg-white px-5 py-2.5 text-sm font-semibold text-black transition hover:bg-neutral-100">🚪 Logout</button>
                 </div>
             </div>
@@ -402,6 +403,7 @@
                 pageTitle: "🏪 Provider Panel",
                 pageSubtitle: "Manage your products and services",
                 logoutButton: "🚪 Logout",
+                exportButton: "📥 Export Excel",
                 statProductsLabel: "📦 My Products",
                 statStockLabel: "📂 Categories",
                 statRevenueLabel: "💰 Revenue",
@@ -469,6 +471,7 @@
                 pageTitle: "🏪 แผงผู้ให้บริการ",
                 pageSubtitle: "จัดการสินค้าและบริการของคุณ",
                 logoutButton: "🚪 ออกจากระบบ",
+                exportButton: "📥 Export Excel",
                 statProductsLabel: "📦 สินค้าของฉัน",
                 statStockLabel: "📂 หมวดสินค้า",
                 statRevenueLabel: "💰 รายได้",
@@ -549,7 +552,7 @@
         function applyTranslations() {
             document.title = t("title");
             [
-                "pageTitle","pageSubtitle","logoutButton","statProductsLabel","statStockLabel",
+                "pageTitle","pageSubtitle","logoutButton","exportButton","statProductsLabel","statStockLabel",
                 "statRevenueLabel","statOrdersLabel","tabAddProduct","tabManageStock","tabMyProducts",
                 "addProductTitle","addNameLabel","addSkuLabel","addCategoryLabel","addPriceLabel",
                 "addStockLabel","addDescriptionLabel","addProductButton","manageStockTitle",
@@ -819,6 +822,40 @@
                 : 'border border-red-200 bg-red-50 text-red-800';
             msgDiv.innerHTML = `<div class="rounded-3xl px-5 py-4 text-sm font-medium shadow-sm ${styles}">${msg}</div>`;
             setTimeout(() => msgDiv.innerHTML = '', 5000);
+        }
+
+        async function downloadExcelExport() {
+            if (!token) {
+                showMessage(`${t('errorPrefix')} Please login first`, 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/api/provider/export-excel`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || 'Export failed');
+                }
+
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                const disposition = response.headers.get('Content-Disposition') || '';
+                const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+                link.href = url;
+                link.download = filenameMatch ? filenameMatch[1] : 'provider_export.xlsx';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                window.URL.revokeObjectURL(url);
+            } catch (error) {
+                showMessage(`${t('errorPrefix')} ${error.message}`, 'error');
+            }
         }
         
         function editProduct(productId) {

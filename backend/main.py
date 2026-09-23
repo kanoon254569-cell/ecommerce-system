@@ -1,13 +1,16 @@
 """Main FastAPI Application"""
 from fastapi import FastAPI, HTTPException, status, Depends, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
 import uvicorn
 import os
+import io
+import json
+import pandas as pd
 
 from .config import settings
 from .database import (
@@ -217,6 +220,68 @@ async def build_admin_studio_snapshot() -> dict:
         "products": [serialize_product(product) for product in products],
         "orders": [serialize_order(order, user_lookup, product_lookup) for order in orders],
     }
+
+def normalize_export_value(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, ObjectId):
+        return str(value)
+    if hasattr(value, "value"):
+        return value.value
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, default=str, ensure_ascii=False)
+    return value
+
+def flatten_export_document(document: dict) -> dict:
+    return {
+        ("id" if key == "_id" else key): normalize_export_value(value)
+        for key, value in document.items()
+    }
+
+def build_order_item_rows(orders: list[dict]) -> list[dict]:
+    rows = []
+    for order in orders:
+        order_id = str(order.get("_id", ""))
+        for index, item in enumerate(order.get("items", []), start=1):
+            rows.append({
+                "order_id": order_id,
+                "line": index,
+                "product_id": item.get("product_id", ""),
+                "name": item.get("name", ""),
+                "quantity": item.get("quantity", 0),
+                "price_at_purchase": item.get("price_at_purchase", 0),
+                "line_total": float(item.get("quantity", 0) or 0) * float(item.get("price_at_purchase", 0) or 0),
+            })
+    return rows
+
+def dataframe_from_documents(documents: list[dict]) -> pd.DataFrame:
+    if not documents:
+        return pd.DataFrame([{"message": "No records"}])
+    return pd.DataFrame([flatten_export_document(document) for document in documents])
+
+async def create_excel_export(collections: dict[str, list[dict]]) -> io.BytesIO:
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        for sheet_name, documents in collections.items():
+            safe_sheet_name = sheet_name[:31]
+            dataframe_from_documents(documents).to_excel(writer, sheet_name=safe_sheet_name, index=False)
+
+        if "orders" in collections:
+            pd.DataFrame(build_order_item_rows(collections["orders"]) or [{"message": "No order items"}]).to_excel(
+                writer,
+                sheet_name="order_items",
+                index=False,
+            )
+
+    buffer.seek(0)
+    return buffer
+
+def excel_download_response(buffer: io.BytesIO, filename: str) -> StreamingResponse:
+    return StreamingResponse(
+        buffer,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 # ===================== LIFESPAN =====================
 
@@ -449,6 +514,26 @@ async def admin_studio_bootstrap(current_user: str = Depends(get_current_user)):
     """Admin studio bootstrap data backed by MongoDB."""
     await enforce_admin_access(current_user)
     return await build_admin_studio_snapshot()
+
+@app.get("/api/admin/export-excel")
+async def admin_export_excel(current_user: str = Depends(get_current_user)):
+    """Download all database collections as an Excel workbook."""
+    await enforce_admin_access(current_user)
+
+    collection_rows = await db.pool.fetch(
+        "SELECT DISTINCT collection FROM app_documents ORDER BY collection"
+    )
+    collections = {}
+    for row in collection_rows:
+        collection_name = row["collection"]
+        collections[collection_name] = await db.db[collection_name].find({}).to_list(None)
+
+    if not collections:
+        collections = {"empty": []}
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    buffer = await create_excel_export(collections)
+    return excel_download_response(buffer, f"export_all_data_{timestamp}.xlsx")
 
 @app.post("/api/admin/studio/profiles")
 async def admin_create_profile(
@@ -834,6 +919,20 @@ async def provider_get_products(current_user: str = Depends(get_current_user)):
     """Provider: Get own products"""
     products = await ProductDB.get_products_by_provider(current_user)
     return {"products": products}
+
+@app.get("/api/provider/export-excel")
+async def provider_export_excel(current_user: str = Depends(get_current_user)):
+    """Download provider-scoped products and orders as an Excel workbook."""
+    provider_scopes = await get_provider_scopes(current_user)
+    products = await db.db["products"].find({"provider_id": {"$in": provider_scopes}}).to_list(None)
+    orders = await db.db["orders"].find({"provider_id": {"$in": provider_scopes}}).to_list(None)
+
+    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    buffer = await create_excel_export({
+        "products": products,
+        "orders": orders,
+    })
+    return excel_download_response(buffer, f"provider_export_{timestamp}.xlsx")
 
 @app.put("/api/provider/products/{product_id}")
 async def provider_update_product(
