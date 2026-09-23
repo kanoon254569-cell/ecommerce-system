@@ -55,6 +55,29 @@ async function request(path, options = {}) {
   return data;
 }
 
+async function download(path) {
+  const token = getAuthToken();
+  const response = await fetch(`${API_BASE}${path}`, {
+    headers: {
+      Authorization: `Bearer ${token}`
+    }
+  });
+
+  if (!response.ok) {
+    const raw = await response.text();
+    const data = readJsonSafely(raw);
+    throw new Error(data?.detail || raw || `Request failed with status ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+  return {
+    blob,
+    filename: filenameMatch ? filenameMatch[1] : "export_all_data.xlsx"
+  };
+}
+
 export const studioApi = {
   bootstrap() {
     return request("/api/admin/studio/bootstrap");
@@ -88,5 +111,8 @@ export const studioApi = {
   },
   checkout(payload) {
     return request("/api/admin/studio/checkout", { method: "POST", body: payload });
+  },
+  exportExcel() {
+    return download("/api/admin/export-excel");
   }
 };

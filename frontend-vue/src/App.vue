@@ -2,6 +2,16 @@
   <div class="min-h-screen bg-ink text-white">
     <div class="mx-auto max-w-7xl px-6 py-8 lg:px-10">
       <header class="panel mb-8 overflow-hidden">
+        <div class="flex flex-col gap-4 border-b border-white/10 px-6 py-6 lg:flex-row lg:items-center lg:justify-between lg:px-8">
+          <div>
+            <p class="text-xs uppercase tracking-[0.24em] text-white/35">Admin Studio</p>
+            <h1 class="mt-2 text-2xl font-semibold">Live Commerce Control</h1>
+          </div>
+          <button class="button-primary" type="button" @click="downloadExcelExport">
+            <ArrowDownTrayIcon class="mr-2 h-4 w-4" />
+            Export Excel
+          </button>
+        </div>
         <div class="grid gap-4 px-6 py-6 lg:grid-cols-5 lg:px-8">
           <div class="rounded-[1.6rem] border border-white/10 bg-white/[0.03] p-4">
             <p class="text-xs uppercase tracking-[0.2em] text-white/35">Profiles</p>
@@ -471,6 +481,7 @@
 import {
   AdjustmentsHorizontalIcon,
   ArchiveBoxIcon,
+  ArrowDownTrayIcon,
   ChevronRightIcon,
   ClipboardDocumentListIcon,
   CreditCardIcon,
@@ -521,6 +532,7 @@ export default {
   components: {
     AdjustmentsHorizontalIcon,
     ArchiveBoxIcon,
+    ArrowDownTrayIcon,
     ChevronRightIcon,
     ClipboardDocumentListIcon,
     CreditCardIcon,
@@ -685,6 +697,21 @@ export default {
     async removeOrder(id) {
       await this.store.deleteOrder(id);
       this.resetOrderForm();
+    },
+    async downloadExcelExport() {
+      try {
+        const { blob, filename } = await this.store.exportExcel();
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      } catch (error) {
+        this.store.error = error.message || "Unable to export Excel.";
+      }
     }
   },
   watch: {

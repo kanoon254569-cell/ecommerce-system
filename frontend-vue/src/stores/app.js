@@ -245,6 +245,15 @@ export const useAppStore = defineStore("app", {
         this.error = error.message || "Unable to complete checkout.";
         throw error;
       }
+    },
+    async exportExcel() {
+      this.error = "";
+      try {
+        return await studioApi.exportExcel();
+      } catch (error) {
+        this.error = error.message || "Unable to export Excel.";
+        throw error;
+      }
     }
   }
 });
